@@ -132,6 +132,8 @@
   .thresh-row input[type=range] { flex: 1; }
 
   .disclaimer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
+  .famHead { font-size: 12px; color: var(--muted); margin: 16px 0 4px; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+  #featureGroups table, #featureAll table { margin-bottom: 4px; }
   .hidden { display: none; }
   code.inline { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 </style>
@@ -155,8 +157,9 @@
     <div>
       <b>Privacy by design.</b> This tool records only the <b>type and timing</b> of your actions
       (a keystroke happened, a paste of N characters happened, a deletion happened) —
-      <b>never the characters you type</b>. There is no keylogging. The replay below reconstructs the
-      <i>rhythm</i> of your writing, not its words.
+      <b>never the characters you type</b>. To locate pauses, it also notes each key's <b>category</b>
+      (letter, space, or sentence punctuation) and the caret position — but <b>never which character</b>.
+      There is no keylogging. The replay below reconstructs the <i>rhythm</i> of your writing, not its words.
     </div>
   </div>
 
@@ -215,13 +218,15 @@
   <!-- ===================== REVIEWER: FEATURES ===================== -->
   <div class="card hidden" id="featureCard">
     <h2>Process features</h2>
-    <p class="hint">Computed from event type + timing only. Each feature separates authentic composition from pasted / transcribed text.</p>
-    <table>
-      <thead>
-        <tr><th>Feature</th><th>Value</th><th>Signal</th></tr>
-      </thead>
-      <tbody id="featureBody"></tbody>
-    </table>
+    <p class="hint">Five feature families from Crossley et al. (2024), computed from event type + timing only.
+      <span class="pill good">good</span> authentic-leaning · <span class="pill watch">watch</span> mixed ·
+      <span class="pill flag">flag</span> transcription-leaning.</p>
+    <div id="ppRatioBox" class="prompt-box" style="border-left-color:var(--paste)"></div>
+    <div id="featureGroups"></div>
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px;font-weight:600">Show all features (every family)</summary>
+      <div id="featureAll" style="margin-top:10px"></div>
+    </details>
   </div>
 
   <!-- ===================== REVIEWER: SCORE ===================== -->
@@ -264,36 +269,81 @@
 <script>
 /* =================================================================
    CONFIG — calibration knobs. EDIT HERE. No magic numbers inline.
-   These are placeholder weights/thresholds: tune on real learner data.
+
+   Feature set + weights are derived from Crossley et al. (2024),
+   "Plagiarism Detection Using Keystroke Logs" (EDM 2024), which separated
+   authentic composition from transcribed text with ~99% accuracy using a
+   random forest over keystroke-process features.
+
+   IMPORTANT: the weights below are SEEDED from that paper's variable-
+   importance ranking, which was measured on a *long argumentative-essay*
+   corpus. They are NOT calibrated for our short ESL reflection answers and
+   MUST be recalibrated on our own labelled data before being trusted.
+   Likewise every `refs` pair is a {transcribed, authentic} anchor used to
+   normalize a raw value into a 0..1 authenticity sub-score; values marked
+   GUESS below have no paper-reported number and are placeholders.
    ================================================================= */
 const CONFIG = {
-  // Relative weight of each feature in the final 0-100 score.
-  // Weights are normalized automatically, so only their ratios matter.
+  // Relative weight of each scored feature (auto-normalized, ratios matter).
+  // Ordered by the paper's importance ranking; top ~10 carry most weight.
   weights: {
-    planning_pauses: 0.25,  // authentic writers pause to plan
-    revision_rate:   0.25,  // authentic writers self-correct
-    paste_share:     0.20,  // pasted fraction of final text
-    longest_paste:   0.20,  // one big block = strong transcription signal
-    burstiness:      0.10,  // paste-heavy sessions are extremely bursty
+    mean_pause_200:                 0.16,  // #1  mean inter-key pause (T=200ms)
+    total_insertion_chars:          0.13,  // #2  insertion chars (excl. space)
+    total_pause_2000:               0.11,  // #3  total higher-order pause time (T=2000ms)
+    product_process_ratio:          0.10,  // #4  final length / all chars ever typed
+    mean_insertion_length:          0.08,  // #5  mean insertion length (excl. space)
+    total_word_deletions:           0.07,  // #6  words deleted
+    mean_pause_before_sentence_200: 0.07,  // #7  pre-sentence planning pause (T=200ms)
+    mean_deletion_length:           0.05,  // #8  mean deletion length (chars)
+    num_insertions:                 0.05,  // #9  number of insertions
+    pauses_within_words_200:        0.05,  // #10 within-word pause COUNT (higher=transcribed)
+    // --- remaining families at lower weight ---
+    pburst_mean_length:             0.03,  // P-burst length (longer=transcribed)
+    process_var_sd10:               0.03,  // SD of production rate across 10 intervals
+    total_deletion_chars:           0.02,  // chars deleted
+    chars_per_min:                  0.02,  // production fluency (incl. deleted text)
+    mean_pause_before_words_200:    0.02,  // pre-word pause (higher=authentic)
+    pause_after_words_200_mean:     0.015, // post-word pause (higher=transcribed)
+    rburst_count:                   0.015, // revision-bounded bursts (more=authentic)
   },
 
-  // Normalization targets: the value at which a feature's authenticity
-  // sub-score saturates (reaches its best contribution).
+  // {transcribed, authentic} anchors. value->sub-score is linear, clamped:
+  // sub = clamp01((value - trans) / (auth - trans)); auth maps to 1 = authentic.
+  // Direction is encoded by which anchor is larger.
+  refs: {
+    mean_pause_200:                 { trans: 750,   auth: 1650 },  // ms  (paper)
+    total_insertion_chars:          { trans: 11,    auth: 308  },  //     (paper)
+    total_pause_2000:               { trans: 20000, auth: 60000 }, // ms  GUESS
+    product_process_ratio:          { trans: 0.95,  auth: 0.82 },  //     (paper)
+    mean_insertion_length:          { trans: 1.0,   auth: 8.9  },  //     (paper)
+    total_word_deletions:           { trans: 17,    auth: 115  },  //     (paper)
+    mean_pause_before_sentence_200: { trans: 3900,  auth: 12700 },// ms  (paper)
+    mean_deletion_length:           { trans: 2,     auth: 6    },  // ch  GUESS
+    num_insertions:                 { trans: 12,    auth: 60   },  //     GUESS
+    pauses_within_words_200:        { trans: 765,   auth: 409  },  // cnt (paper; higher=transcribed)
+    pburst_mean_length:             { trans: 60,    auth: 25   },  // ch  GUESS
+    process_var_sd10:               { trans: 20,    auth: 60   },  //     GUESS
+    total_deletion_chars:           { trans: 60,    auth: 600  },  // ch  GUESS
+    chars_per_min:                  { trans: 200,   auth: 140  },  //     GUESS (mild)
+    mean_pause_before_words_200:    { trans: 900,   auth: 1800 },  // ms  GUESS
+    pause_after_words_200_mean:     { trans: 1500,  auth: 900  },  // ms  GUESS (higher=transcribed)
+    rburst_count:                   { trans: 30,    auth: 80   },  //     GUESS
+  },
+
+  // Extraction parameters.
   norm: {
-    pause_burst_ms:      1200, // a gap >= this counts as a planning pause before a burst
-    pause_target_ms:     900,  // mean planning-pause length that maps to "fully authentic"
-    revision_target:     0.08, // (deletions + mid-insertions) per char that maps to authentic
-    longest_paste_cap:   120,  // a single paste this big (chars) maps to least authentic
-    burstiness_baseline: 1.0,  // CV of inter-event gaps for natural typing (~1)
-    burstiness_range:    4.0,  // CV span above baseline that maps to fully bursty/pasted
+    pause_short_ms:  200,   // T1: planning/language pauses (filters motor-typing noise)
+    pause_long_ms:   2000,  // T2: higher-order cognitive pauses
+    burst_pause_ms:  2000,  // a P-burst ends at a pause >= this
+    avg_word_len:    5.5,   // chars/word, to estimate word deletions
+    intervals_coarse: 5,    // process-variance split A
+    intervals_fine:   10,   // process-variance split B
   },
 
-  // Per-feature good / watch / flag bands for the reviewer indicator.
-  // Bands are expressed in the feature's *authenticity sub-score* (0..1):
-  //   sub >= good  -> "good"; sub >= watch -> "watch"; else -> "flag".
-  bands: { good: 0.66, watch: 0.40 },
+  // good / watch / flag bands on a feature's authenticity sub-score (0..1).
+  bands: { good: 0.60, watch: 0.35 },
 
-  // Default review threshold on the final 0-100 score (slider overrides it live).
+  // Default review threshold on the final 0-100 score (slider overrides live).
   defaultThreshold: 50,
 };
 
@@ -310,19 +360,30 @@ function now() { return performance.now(); }
 function ensureStart() { if (startTime === null) startTime = now(); }
 function rel() { return Math.round(now() - startTime); }
 
+// Coarse character CATEGORY (not the character). Used only to locate pauses.
+function classOf(key) {
+  if (key === 'Enter') return 'para';
+  if (key === ' ' || key === '\t') return 'space';
+  if (key.length === 1 && /[.!?]/.test(key)) return 'sentence';
+  if (key.length === 1 && /[\p{L}\p{N}]/u.test(key)) return 'word';
+  return 'other'; // commas, brackets, symbols
+}
+
 editor.addEventListener('keydown', (e) => {
   // ignore pure modifiers / navigation so they don't masquerade as "production"
   const nav = ['Shift','Control','Alt','Meta','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Tab','CapsLock'];
   if (nav.includes(e.key)) return;
   ensureStart();
 
+  const pos = editor.selectionStart;
   if (e.key === 'Backspace' || e.key === 'Delete') {
     const selLen = Math.abs(editor.selectionEnd - editor.selectionStart);
-    events.push({ t: rel(), type: 'delete', size: Math.max(1, selLen) });
+    events.push({ t: rel(), type: 'delete', size: Math.max(1, selLen), pos });
   } else if (e.key.length === 1 || e.key === 'Enter') {
     // is the caret away from the end? -> mid-text insertion (revision behaviour)
     const atEnd = editor.selectionStart >= editor.value.length;
-    events.push({ t: rel(), type: 'key', size: 1, mid: !atEnd });
+    // coarse CATEGORY only — never the character itself
+    events.push({ t: rel(), type: 'key', size: 1, mid: !atEnd, pos, cls: classOf(e.key) });
   }
   refreshLiveStats();
 });
@@ -330,7 +391,8 @@ editor.addEventListener('keydown', (e) => {
 editor.addEventListener('paste', (e) => {
   ensureStart();
   const pasted = (e.clipboardData || window.clipboardData).getData('text') || '';
-  events.push({ t: rel(), type: 'paste', size: pasted.length }); // COUNT ONLY, no content
+  const atEnd = editor.selectionStart >= editor.value.length;
+  events.push({ t: rel(), type: 'paste', size: pasted.length, pos: editor.selectionStart, mid: !atEnd, cls: 'paste' }); // COUNT ONLY, no content
   setTimeout(refreshLiveStats, 0);
 });
 
@@ -355,90 +417,197 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 });
 
 /* =================================================================
-   PROCESS-FEATURE ENGINE
+   PROCESS-FEATURE ENGINE — five feature families (Crossley et al. 2024)
+   All derived from the raw event stream (timestamps, types, caret pos,
+   coarse char category, paste sizes). Reimplements, in JS, the kind of
+   extraction Inputlog performed in the original study.
    ================================================================= */
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+function mean(a){ return a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; }
+function median(a){ if(!a.length) return 0; const s=[...a].sort((x,y)=>x-y); const m=s.length>>1; return s.length%2 ? s[m] : (s[m-1]+s[m])/2; }
+function sd(a){ if(a.length<2) return 0; const m=mean(a); return Math.sqrt(a.reduce((x,y)=>x+(y-m)*(y-m),0)/a.length); }
+function stats(a){ return { count:a.length, mean:mean(a), median:median(a), sd:sd(a), total:a.reduce((x,y)=>x+y,0) }; }
+
+// LOCATION of a pause, from the char categories on either side of the gap.
+// Direction is counterintuitive (see paper): within/after-word pauses are
+// HIGHER in transcribed text (working-memory copying); before-sentence /
+// before-word pauses are HIGHER in authentic composition (planning).
+function locOf(prevCls, curCls){
+  if (prevCls==='sentence' || prevCls==='para') return 'beforeSentence';
+  if (prevCls==='space'    && curCls==='word')  return 'beforeWord';
+  if (prevCls==='word'     && curCls==='word')  return 'withinWord';
+  if (prevCls==='word'     && curCls==='space') return 'afterWord';
+  return 'other';
+}
+
+// pauses (gaps >= thr) between consecutive PRODUCTION events, bucketed by location
+function pauseBuckets(prod, thr){
+  const b = { overall:[], beforeSentence:[], beforeWord:[], withinWord:[], afterWord:[], other:[] };
+  for (let i=1;i<prod.length;i++){
+    const g = prod[i].t - prod[i-1].t;
+    if (g < thr) continue;
+    b.overall.push(g);
+    b[ locOf(prod[i-1].cls, prod[i].cls) ].push(g);
+  }
+  return b;
+}
+
 function computeFeatures(evs, finalLen) {
   const N = CONFIG.norm;
-  const keyEvents   = evs.filter(e => e.type === 'key');
-  const pasteEvents = evs.filter(e => e.type === 'paste');
-  const delEvents   = evs.filter(e => e.type === 'delete');
+  const prod        = evs.filter(e => e.type==='key' || e.type==='paste'); // production
+  const keyEvents   = evs.filter(e => e.type==='key');
+  const pasteEvents = evs.filter(e => e.type==='paste');
+  const delEvents   = evs.filter(e => e.type==='delete');
 
-  const typedChars   = keyEvents.length;                         // chars produced by typing
-  const pastedChars  = pasteEvents.reduce((s,e)=>s+e.size, 0);
-  const deletedChars = delEvents.reduce((s,e)=>s+e.size, 0);
-  const midInsertions= keyEvents.filter(e => e.mid).length;
-  const producedChars= Math.max(1, typedChars + pastedChars);    // avoid /0
-  const totalLen     = Math.max(1, finalLen || (typedChars + pastedChars - deletedChars));
+  const durationMs = evs.length ? evs[evs.length-1].t : 0;
+  const minutes    = durationMs>0 ? durationMs/60000 : 0;
 
-  // --- inter-event gaps (timing only) ---
-  const gaps = [];
-  for (let i = 1; i < evs.length; i++) gaps.push(evs[i].t - evs[i-1].t);
+  // production INCLUDES text later deleted (every char ever produced)
+  const typedChars     = keyEvents.length;                    // 1 char / keystroke
+  const pastedChars    = pasteEvents.reduce((s,e)=>s+e.size,0);
+  const totalCharsEver = typedChars + pastedChars;
+  const finalLength    = finalLen || 0;
 
-  // planning_pauses: mean length of gaps that precede a typing burst
-  // (a gap >= pause_burst_ms followed by a key event = planning before a burst)
-  const planningGaps = [];
-  for (let i = 1; i < evs.length; i++) {
-    const g = evs[i].t - evs[i-1].t;
-    if (g >= N.pause_burst_ms && evs[i].type === 'key') planningGaps.push(g);
+  // ===== FAMILY A — PAUSES at T=200ms and T=2000ms, by location =====
+  const p200  = pauseBuckets(prod, N.pause_short_ms);
+  const p2000 = pauseBuckets(prod, N.pause_long_ms);
+  const pack = b => ({
+    overall: stats(b.overall), beforeSentence: stats(b.beforeSentence),
+    beforeWord: stats(b.beforeWord), withinWord: stats(b.withinWord), afterWord: stats(b.afterWord),
+  });
+  const pauses = { t200: pack(p200), t2000: pack(p2000) };
+
+  // ===== FAMILY B — BURSTS =====
+  // P-bursts: production runs ending at a pause >= burst_pause_ms (transcribers run longer)
+  const pburstLens = [];
+  { let cur = 0;
+    for (let i=0;i<prod.length;i++){
+      cur += prod[i].size;
+      const last = i === prod.length-1;
+      if (last || (prod[i+1].t - prod[i].t) >= N.burst_pause_ms){ pburstLens.push(cur); cur=0; }
+    }
   }
-  const meanPlanningPause = planningGaps.length
-    ? planningGaps.reduce((a,b)=>a+b,0) / planningGaps.length : 0;
-  const burstCount = planningGaps.length + (typedChars > 0 ? 1 : 0); // bursts ~ pauses + first burst
-
-  // revision_rate: (deletions + mid-text insertions) per char produced
-  const revisionRate = (deletedChars + midInsertions) / producedChars;
-
-  // paste_share: fraction of final length that arrived via paste
-  const pasteShare = Math.min(1, pastedChars / totalLen);
-
-  // longest_paste: largest single paste (chars)
-  const longestPaste = pasteEvents.reduce((m,e)=>Math.max(m,e.size), 0);
-
-  // burstiness: coefficient of variation of inter-event gaps (clumpiness of rhythm)
-  let burstiness = 0;
-  if (gaps.length > 1) {
-    const mean = gaps.reduce((a,b)=>a+b,0)/gaps.length;
-    const variance = gaps.reduce((a,b)=>a+(b-mean)*(b-mean),0)/gaps.length;
-    burstiness = mean > 0 ? Math.sqrt(variance)/mean : 0; // CV
+  // R-bursts: runs ending at a revision (deletion or mid-text insertion)
+  const rburstLens = [];
+  { let cur = 0;
+    for (const e of evs){
+      if (e.type==='delete'){ if(cur>0){rburstLens.push(cur);cur=0;} continue; }
+      if (e.type==='key' || e.type==='paste'){
+        if (e.mid && cur>0){ rburstLens.push(cur); cur=0; } // insertion = revision boundary
+        cur += e.size;
+      }
+    }
+    if (cur>0) rburstLens.push(cur);
   }
+  const bursts = {
+    p: { count: pburstLens.length, ...stats(pburstLens) },
+    r: { count: rburstLens.length, ...stats(rburstLens) },
+  };
+
+  // ===== FAMILY C — REVISIONS =====
+  // insertions: consecutive mid-text production grouped; length EXCLUDES spaces
+  const insertionLens = [];
+  { let cur=0, open=false;
+    for (const e of prod){
+      if (e.mid){ open=true; cur += (e.type==='paste') ? e.size : (e.cls==='space'||e.cls==='para' ? 0 : 1); }
+      else if (open){ insertionLens.push(cur); cur=0; open=false; }
+    }
+    if (open) insertionLens.push(cur);
+  }
+  const deletionLens = delEvents.map(e=>e.size);
+  const totalDeletionChars = deletionLens.reduce((s,x)=>s+x,0);
+  const revisions = {
+    numInsertions:       insertionLens.length,
+    totalInsertionChars: insertionLens.reduce((s,x)=>s+x,0),
+    insertionLen:        stats(insertionLens),
+    numDeletions:        delEvents.length,
+    totalDeletionChars,
+    totalWordDeletions:  Math.round(totalDeletionChars / N.avg_word_len), // est. words
+    deletionLen:         stats(deletionLens),
+    totalRevisions:      insertionLens.length + delEvents.length,
+  };
+
+  // ===== FAMILY D — PRODUCTION FLUENCY (over full process, incl. deleted) =====
+  const wordsTyped      = keyEvents.filter(e=>e.cls==='space').length + (totalCharsEver>0?1:0);
+  const sentencesTyped  = keyEvents.filter(e=>e.cls==='sentence').length;
+  const paragraphsTyped = keyEvents.filter(e=>e.cls==='para').length + (totalCharsEver>0?1:0);
+  const fluency = {
+    chars_per_min:     minutes>0 ? totalCharsEver/minutes : 0,
+    words_per_min:     minutes>0 ? wordsTyped/minutes : 0,
+    sentences_per_min: minutes>0 ? sentencesTyped/minutes : 0,
+    paras_per_min:     minutes>0 ? paragraphsTyped/minutes : 0,
+  };
+
+  // ===== FAMILY E — PROCESS VARIANCE (SD of production rate across intervals) =====
+  function ratePerInterval(n){
+    if (durationMs<=0) return [];
+    const dt = durationMs/n, perMin = dt/60000, rates=[];
+    for (let k=0;k<n;k++){
+      const lo=k*dt, hi=(k+1)*dt; let chars=0;
+      for (const e of prod) if (e.t>=lo && e.t<hi) chars += e.size;
+      rates.push(perMin>0 ? chars/perMin : 0);
+    }
+    return rates;
+  }
+  const rates5 = ratePerInterval(N.intervals_coarse);
+  const rates10 = ratePerInterval(N.intervals_fine);
+  const variance = { sd5: sd(rates5), sd10: sd(rates10), rateMean: mean(rates10), rateMedian: median(rates10), rates5, rates10 };
+
+  // ===== standalone: PRODUCT-PROCESS RATIO (4th-most-predictive) =====
+  const productProcessRatio = totalCharsEver>0 ? finalLength/totalCharsEver : 0;
+
+  // ----- flat scored map consumed by subScores()/compositeScore() -----
+  const scored = {
+    mean_pause_200:                 pauses.t200.overall.mean,
+    total_insertion_chars:          revisions.totalInsertionChars,
+    total_pause_2000:               pauses.t2000.overall.total,
+    product_process_ratio:          productProcessRatio,
+    mean_insertion_length:          revisions.insertionLen.mean,
+    total_word_deletions:           revisions.totalWordDeletions,
+    mean_pause_before_sentence_200: pauses.t200.beforeSentence.mean,
+    mean_deletion_length:           revisions.deletionLen.mean,
+    num_insertions:                 revisions.numInsertions,
+    pauses_within_words_200:        pauses.t200.withinWord.count,
+    pburst_mean_length:             bursts.p.mean,
+    process_var_sd10:               variance.sd10,
+    total_deletion_chars:           revisions.totalDeletionChars,
+    chars_per_min:                  fluency.chars_per_min,
+    mean_pause_before_words_200:    pauses.t200.beforeWord.mean,
+    pause_after_words_200_mean:     pauses.t200.afterWord.mean,
+    rburst_count:                   bursts.r.count,
+  };
 
   return {
     raw: {
-      typedChars, pastedChars, deletedChars, midInsertions, totalLen,
-      planningPauseCount: planningGaps.length, burstCount,
+      typedChars, pastedChars, totalCharsEver, finalLength, durationMs,
+      numInsertions: revisions.numInsertions, numDeletions: revisions.numDeletions,
+      totalRevisions: revisions.totalRevisions,
+      pburstCount: bursts.p.count, rburstCount: bursts.r.count,
+      wordsTyped, sentencesTyped, productProcessRatio,
     },
-    features: {
-      planning_pauses: meanPlanningPause, // ms
-      revision_rate:   revisionRate,      // per char
-      paste_share:     pasteShare,        // 0..1
-      longest_paste:   longestPaste,      // chars
-      burstiness:      burstiness,        // CV
-    },
+    families: { pauses, bursts, revisions, fluency, variance, productProcessRatio },
+    scored,
   };
 }
 
-// Map each raw feature to an authenticity sub-score in [0,1] (1 = most authentic)
-function subScores(f) {
-  const N = CONFIG.norm;
-  return {
-    planning_pauses: clamp01(f.planning_pauses / N.pause_target_ms),
-    revision_rate:   clamp01(f.revision_rate   / N.revision_target),
-    paste_share:     clamp01(1 - f.paste_share),
-    longest_paste:   clamp01(1 - f.longest_paste / N.longest_paste_cap),
-    burstiness:      clamp01(1 - (f.burstiness - N.burstiness_baseline) / N.burstiness_range),
-  };
-}
-function clamp01(x){ return Math.max(0, Math.min(1, x)); }
-
-function compositeScore(subs) {
-  const w = CONFIG.weights;
-  const totalW = Object.values(w).reduce((a,b)=>a+b,0);
-  let acc = 0;
-  for (const k in w) acc += w[k] * (subs[k] ?? 0);
-  return Math.round(100 * acc / totalW);
+// Map each scored feature to a 0..1 authenticity sub-score via its {trans,auth} anchors
+function subScores(scored){
+  const subs = {};
+  for (const k in CONFIG.refs){
+    const r = CONFIG.refs[k], v = scored[k];
+    if (v==null || r.auth===r.trans){ subs[k]=0.5; continue; }
+    subs[k] = clamp01((v - r.trans) / (r.auth - r.trans));
+  }
+  return subs;
 }
 
-function band(sub) {
+function compositeScore(subs){
+  const w = CONFIG.weights; let acc=0, tot=0;
+  for (const k in w){ tot += w[k]; acc += w[k] * (subs[k] ?? 0.5); }
+  return Math.round(100 * acc / tot);
+}
+
+function band(sub){
   if (sub >= CONFIG.bands.good)  return 'good';
   if (sub >= CONFIG.bands.watch) return 'watch';
   return 'flag';
@@ -451,13 +620,13 @@ let lastAnalysis = null;
 
 document.getElementById('analyzeBtn').addEventListener('click', () => {
   const finalLen = editor.value.length;
-  const { raw, features } = computeFeatures(events, finalLen);
-  const subs  = subScores(features);
+  const computed = computeFeatures(events, finalLen);
+  const subs  = subScores(computed.scored);
   const score = compositeScore(subs);
-  lastAnalysis = { raw, features, subs, score, finalLen };
+  lastAnalysis = { ...computed, subs, score, finalLen };
 
-  renderReflection(raw, features);
-  renderFeatures(features, subs);
+  renderReflection(computed);
+  renderFeatures(computed, subs);
   renderScore(score);
   setupReplay();
 
@@ -465,44 +634,74 @@ document.getElementById('analyzeBtn').addEventListener('click', () => {
   applyMode();
 });
 
-function renderReflection(raw, f) {
-  document.getElementById('rPauses').textContent = f.planning_pauses ? (f.planning_pauses/1000).toFixed(1)+'s' : '0s';
-  document.getElementById('rRevise').textContent = raw.deletedChars + raw.midInsertions;
-  document.getElementById('rBursts').textContent = raw.burstCount;
-  const total = events.length ? (events[events.length-1].t/1000).toFixed(1)+'s' : '0s';
-  document.getElementById('rTime').textContent = total;
+function renderReflection(c) {
+  const pause = c.scored.mean_pause_200;
+  document.getElementById('rPauses').textContent = pause ? (pause/1000).toFixed(1)+'s' : '0s';
+  document.getElementById('rRevise').textContent = c.raw.totalRevisions;
+  document.getElementById('rBursts').textContent = c.raw.pburstCount;
+  document.getElementById('rTime').textContent = (c.raw.durationMs/1000).toFixed(1)+'s';
 }
 
-const FEATURE_META = {
-  planning_pauses: { label: 'Planning pauses', unit: 'ms avg',
-    desc: 'Average pause before a typing burst. Authentic writing pauses to plan; pasted text does not.',
-    fmt: v => Math.round(v) + ' ms' },
-  revision_rate: { label: 'Revision rate', unit: '/char',
-    desc: 'Deletions + mid-text insertions per character. Authentic writers self-correct; pasted text arrives finished.',
-    fmt: v => v.toFixed(3) },
-  paste_share: { label: 'Paste share', unit: 'fraction',
-    desc: 'Fraction of the final answer that arrived via paste. High = transcription.',
-    fmt: v => (v*100).toFixed(0) + '%' },
-  longest_paste: { label: 'Longest single paste', unit: 'chars',
-    desc: 'Largest single pasted block. One big block is the strongest transcription signal.',
-    fmt: v => Math.round(v) + ' chars' },
-  burstiness: { label: 'Burstiness', unit: 'CV',
-    desc: 'Clumpiness of typing rhythm (coefficient of variation). Paste-heavy sessions are extremely bursty.',
-    fmt: v => v.toFixed(2) },
-};
+// ---- display metadata: which scored features show, in which family, how to format ----
+const fmtMs = v => (v/1000).toFixed(2)+'s';
+const fmtN  = v => Math.round(v).toLocaleString();
+const fmtCh = v => Math.round(v)+' ch';
+const fmt2  = v => (+v).toFixed(2);
 
-function renderFeatures(features, subs) {
-  const body = document.getElementById('featureBody');
-  body.innerHTML = '';
-  for (const k in FEATURE_META) {
-    const m = FEATURE_META[k];
-    const b = band(subs[k]);
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><b>${m.label}</b><div class="desc">${m.desc}</div></td>
-      <td class="val">${m.fmt(features[k])}</td>
-      <td><span class="pill ${b}">${b}</span></td>`;
-    body.appendChild(tr);
+const SCORED_META = {
+  mean_pause_200:                 {family:'Pauses', top:true,  label:'Mean pause (≥200 ms)', fmt:fmtMs, hint:'Avg inter-key pause. Authentic ~1.65s vs transcribed ~0.75s.'},
+  total_pause_2000:               {family:'Pauses', top:true,  label:'Total long-pause time (≥2 s)', fmt:fmtMs, hint:'Sum of higher-order cognitive pauses (planning, revising).'},
+  mean_pause_before_sentence_200: {family:'Pauses', top:true,  label:'Pause before sentences', fmt:fmtMs, hint:'Planning a new sentence. Authentic ~12.7s vs ~3.9s.'},
+  pauses_within_words_200:        {family:'Pauses', top:true,  label:'Within-word pauses (count)', fmt:fmtN, hint:'COUNTER-intuitive: HIGHER in transcribed (765 vs 409) — working-memory copying.'},
+  mean_pause_before_words_200:    {family:'Pauses', top:false, label:'Pause before words', fmt:fmtMs, hint:'Word retrieval; higher in authentic.'},
+  pause_after_words_200_mean:     {family:'Pauses', top:false, label:'Pause after words', fmt:fmtMs, hint:'Higher in transcribed.'},
+  pburst_mean_length:             {family:'Bursts', top:true,  label:'Mean P-burst length', fmt:fmtCh, hint:'Typing run before a ≥2s pause. Transcribers produce LONGER bursts.'},
+  rburst_count:                   {family:'Bursts', top:false, label:'R-burst count', fmt:fmtN, hint:'Runs ended by a revision; more = more self-correction.'},
+  total_insertion_chars:          {family:'Revisions', top:true,  label:'Insertion chars (excl. space)', fmt:fmtCh, hint:'HUGE separator: authentic ~308 vs transcribed ~11.'},
+  mean_insertion_length:          {family:'Revisions', top:true,  label:'Mean insertion length', fmt:fmtCh, hint:'Authentic ~8.9 vs ~1.0 chars.'},
+  num_insertions:                 {family:'Revisions', top:true,  label:'Number of insertions', fmt:fmtN, hint:'Mid-text edits.'},
+  total_word_deletions:           {family:'Revisions', top:true,  label:'Word deletions (est.)', fmt:fmtN, hint:'Authentic ~115 vs ~17. Estimated from deleted chars.'},
+  mean_deletion_length:           {family:'Revisions', top:true,  label:'Mean deletion length', fmt:fmtCh, hint:'Chars per deletion.'},
+  total_deletion_chars:           {family:'Revisions', top:false, label:'Total chars deleted', fmt:fmtCh, hint:'Authentic deletes far more.'},
+  chars_per_min:                  {family:'Fluency', top:true, label:'Chars / min (incl. deleted)', fmt:v=>Math.round(v)+'/min', hint:'Production rate over the whole process, deleted text included.'},
+  process_var_sd10:               {family:'Process variance', top:true, label:'Rate SD across 10 intervals', fmt:v=>Math.round(v)+'', hint:'Authentic writing is dynamic (higher variance); transcription is linear.'},
+};
+const FAMILY_ORDER = ['Pauses','Bursts','Revisions','Fluency','Process variance'];
+
+function featureRow(key, scored, subs){
+  const m = SCORED_META[key], b = band(subs[key]);
+  return `<tr>
+    <td><b>${m.label}</b><div class="desc">${m.hint}</div></td>
+    <td class="val">${m.fmt(scored[key] ?? 0)}</td>
+    <td><span class="pill ${b}">${b}</span></td></tr>`;
+}
+function familyTable(keys, scored, subs){
+  return `<table><tbody>${keys.map(k=>featureRow(k,scored,subs)).join('')}</tbody></table>`;
+}
+
+function renderFeatures(c, subs) {
+  const scored = c.scored;
+
+  // product-process ratio — prominent standalone
+  const ppr = c.raw.productProcessRatio, pprB = band(subs.product_process_ratio);
+  document.getElementById('ppRatioBox').innerHTML =
+    `<b>Product–process ratio:</b> ${fmt2(ppr)} &nbsp;<span class="pill ${pprB}">${pprB}</span>
+     <div class="desc" style="margin-top:4px">Final length ÷ all characters ever typed. Authentic ~0.82 (much typing never survives); transcribed ~0.95 (types ≈ only the final text).</div>`;
+
+  // top features grouped under the five family headings
+  const groups = document.getElementById('featureGroups'); groups.innerHTML = '';
+  for (const fam of FAMILY_ORDER){
+    const keys = Object.keys(SCORED_META).filter(k=>SCORED_META[k].family===fam && SCORED_META[k].top);
+    if (!keys.length) continue;
+    groups.innerHTML += `<h3 class="famHead">${fam}</h3>` + familyTable(keys, scored, subs);
+  }
+
+  // expandable: every scored feature, grouped
+  const all = document.getElementById('featureAll'); all.innerHTML = '';
+  for (const fam of FAMILY_ORDER){
+    const keys = Object.keys(SCORED_META).filter(k=>SCORED_META[k].family===fam);
+    if (!keys.length) continue;
+    all.innerHTML += `<h3 class="famHead">${fam}</h3>` + familyTable(keys, scored, subs);
   }
 }
 
@@ -646,20 +845,22 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   const payload = {
     schema: 'nxtwave.writing-process-signal/v1',
     exported_at_iso: new Date().toISOString(),
-    privacy_note: 'Event TYPE and TIMING only. No typed content is captured or stored.',
+    privacy_note: 'Event TYPE, TIMING, caret position and coarse char CATEGORY only. No typed characters are captured or stored.',
     scope: 'open-ended / reflection answers only — not for coding answers',
     output_is: 'human-review trigger, never an automatic penalty',
+    feature_basis: 'Crossley et al. (2024), Plagiarism Detection Using Keystroke Logs (EDM 2024)',
     config: CONFIG,
     session: {
-      duration_ms: events.length ? events[events.length-1].t : 0,
+      duration_ms: lastAnalysis.raw.durationMs,
       final_length: lastAnalysis.finalLen,
       event_count: events.length,
-      events: events,                 // [{t,type,size,mid?}]
+      events: events,                 // [{t,type,size,pos,cls?,mid?}] — never any character content
     },
     computed: {
       raw: lastAnalysis.raw,
-      features: lastAnalysis.features,
-      sub_scores: lastAnalysis.subs,
+      families: lastAnalysis.families,   // full feature families A–E + ratio (mean/median/sd/counts)
+      scored: lastAnalysis.scored,       // flat values that feed the score
+      sub_scores: lastAnalysis.subs,     // 0..1 authenticity per scored feature
       composition_authenticity_score: lastAnalysis.score,
       threshold_used: getThreshold(),
       routed_to_review: lastAnalysis.score < getThreshold(),
