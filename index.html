@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Writing Process Signal — NxtWave</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --line: #2a2f3a;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #5b8cff;
+    --good: #36c98b;
+    --watch: #e6b450;
+    --flag: #ef5a6f;
+    --paste: #c678dd;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .layout { display: grid; grid-template-columns: 1fr; gap: 0; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px; width: 100%; }
+
+  /* Mode toggle */
+  .modes { display: flex; gap: 6px; background: var(--panel-2); padding: 4px; border-radius: 10px; }
+  .modes button {
+    background: transparent; color: var(--muted); border: 0; padding: 8px 14px;
+    border-radius: 7px; cursor: pointer; font-size: 13px; font-weight: 600;
+  }
+  .modes button.active { background: var(--accent); color: #fff; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; margin-bottom: 18px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 4px; }
+  .card .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+
+  /* Privacy banner */
+  .privacy {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: linear-gradient(90deg, rgba(54,201,139,.10), rgba(91,140,255,.06));
+    border: 1px solid rgba(54,201,139,.35);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 18px; font-size: 13px;
+  }
+  .privacy b { color: var(--good); }
+  .privacy .dot { font-size: 20px; line-height: 1; }
+
+  /* Prompt + editor */
+  .prompt-box {
+    background: var(--panel-2); border-left: 3px solid var(--accent);
+    padding: 12px 14px; border-radius: 8px; font-size: 14px; margin-bottom: 14px;
+  }
+  textarea {
+    width: 100%; min-height: 200px; resize: vertical;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px; font-size: 15px; font-family: inherit; line-height: 1.6;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .stat { font-size: 13px; color: var(--muted); }
+  .stat b { color: var(--text); }
+
+  button.btn {
+    background: var(--accent); color: #fff; border: 0; padding: 10px 18px;
+    border-radius: 9px; cursor: pointer; font-size: 14px; font-weight: 600;
+  }
+  button.btn.secondary { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); }
+  button.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* Reflection (learner) view */
+  .reflect-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .reflect-tile {
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px;
+  }
+  .reflect-tile .num { font-size: 26px; font-weight: 700; }
+  .reflect-tile .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* Timeline */
+  .timeline-wrap { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas { width: 100%; display: block; border-radius: 6px; background: #11131a; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  .controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .controls input[type=range] { flex: 1; }
+
+  /* Feature panel */
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+  .pill.good { background: rgba(54,201,139,.15); color: var(--good); }
+  .pill.watch { background: rgba(230,180,80,.15); color: var(--watch); }
+  .pill.flag { background: rgba(239,90,111,.15); color: var(--flag); }
+  td.val { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+  td .desc { color: var(--muted); font-size: 12px; }
+
+  /* Score */
+  .score-wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+  .gauge { width: 150px; height: 150px; position: relative; flex: 0 0 auto; }
+  .gauge .label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .gauge .label .n { font-size: 38px; font-weight: 800; }
+  .gauge .label .t { font-size: 11px; color: var(--muted); }
+  .verdict { flex: 1; min-width: 240px; }
+  .verdict .badge { display: inline-block; padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 15px; }
+  .verdict .badge.cleared { background: rgba(54,201,139,.15); color: var(--good); }
+  .verdict .badge.review { background: rgba(230,180,80,.15); color: var(--watch); }
+  .verdict p { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  .thresh-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 13px; }
+  .thresh-row input[type=range] { flex: 1; }
+
+  .disclaimer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
+  .hidden { display: none; }
+  code.inline { background: var(--panel-2); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Writing Process Signal</h1>
+    <div class="sub">NxtWave · pedagogy &amp; integrity research tool · open-ended answers only</div>
+  </div>
+  <div class="modes">
+    <button id="mode-learner" class="active">Learner view</button>
+    <button id="mode-reviewer">Reviewer view</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="privacy">
+    <span class="dot">🔒</span>
+    <div>
+      <b>Privacy by design.</b> This tool records only the <b>type and timing</b> of your actions
+      (a keystroke happened, a paste of N characters happened, a deletion happened) —
+      <b>never the characters you type</b>. There is no keylogging. The replay below reconstructs the
+      <i>rhythm</i> of your writing, not its words.
+    </div>
+  </div>
+
+  <!-- ===================== CAPTURE ===================== -->
+  <div class="card">
+    <h2>Compose your answer</h2>
+    <p class="hint">Reflection / open-ended question. (Not for coding answers — normal coding involves heavy legitimate pasting, which this signal would misread.)</p>
+    <div class="prompt-box" id="promptBox">
+      <b>Prompt:</b> Describe a time you faced a difficult bug or problem in a project.
+      What did you try, what failed, and what did you finally learn?
+    </div>
+    <textarea id="editor" placeholder="Start typing your answer here…"></textarea>
+    <div class="row">
+      <span class="stat">Characters: <b id="charCount">0</b></span>
+      <span class="stat">Events captured: <b id="eventCount">0</b></span>
+      <span class="stat">Elapsed: <b id="elapsed">0.0s</b></span>
+      <div style="flex:1"></div>
+      <button class="btn secondary" id="resetBtn">Reset session</button>
+      <button class="btn" id="analyzeBtn">Analyze &amp; replay</button>
+    </div>
+  </div>
+
+  <!-- ===================== LEARNER REFLECTION ===================== -->
+  <div class="card" id="reflectCard">
+    <h2>See how you composed your answer</h2>
+    <p class="hint">A friendly look at your writing rhythm. This is just for your own reflection.</p>
+    <div class="reflect-grid">
+      <div class="reflect-tile"><div class="num" id="rPauses">–</div><div class="lbl">Thinking pauses (avg, before typing bursts)</div></div>
+      <div class="reflect-tile"><div class="num" id="rRevise">–</div><div class="lbl">Times you revised / self-corrected</div></div>
+      <div class="reflect-tile"><div class="num" id="rBursts">–</div><div class="lbl">Typing bursts</div></div>
+      <div class="reflect-tile"><div class="num" id="rTime">–</div><div class="lbl">Total composing time</div></div>
+    </div>
+    <p class="hint" style="margin-top:14px">Nice work — writing in your own words, pausing to think, and revising are all signs of authentic composition. 🌱</p>
+  </div>
+
+  <!-- ===================== REPLAY ===================== -->
+  <div class="card hidden" id="replayCard">
+    <h2>Process replay</h2>
+    <p class="hint">Watch the answer come into being. Steady ticks = typing · gaps = pauses · purple blocks = pasted text (sized by character count). Words are never shown — only rhythm and structure.</p>
+    <div class="timeline-wrap">
+      <canvas id="timeline" height="160"></canvas>
+      <div class="legend">
+        <span><span class="swatch" style="background:#5b8cff"></span>Keystroke</span>
+        <span><span class="swatch" style="background:#3a3f4b"></span>Pause (gap)</span>
+        <span><span class="swatch" style="background:#c678dd"></span>Paste block</span>
+        <span><span class="swatch" style="background:#ef5a6f"></span>Deletion</span>
+      </div>
+      <div class="controls">
+        <button class="btn secondary" id="playBtn">▶ Play</button>
+        <input type="range" id="scrub" min="0" max="1000" value="1000" />
+        <span class="stat"><b id="scrubTime">0.0s</b></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== REVIEWER: FEATURES ===================== -->
+  <div class="card hidden" id="featureCard">
+    <h2>Process features</h2>
+    <p class="hint">Computed from event type + timing only. Each feature separates authentic composition from pasted / transcribed text.</p>
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Value</th><th>Signal</th></tr>
+      </thead>
+      <tbody id="featureBody"></tbody>
+    </table>
+  </div>
+
+  <!-- ===================== REVIEWER: SCORE ===================== -->
+  <div class="card hidden" id="scoreCard">
+    <h2>Composition authenticity score</h2>
+    <p class="hint">A single 0–100 signal. Below the threshold routes the answer to <b>human review</b>. This is a review trigger — never an automatic penalty.</p>
+    <div class="score-wrap">
+      <div class="gauge">
+        <svg width="150" height="150" viewBox="0 0 150 150">
+          <circle cx="75" cy="75" r="64" fill="none" stroke="#2a2f3a" stroke-width="14"/>
+          <circle id="gaugeArc" cx="75" cy="75" r="64" fill="none" stroke="var(--accent)" stroke-width="14"
+                  stroke-linecap="round" stroke-dasharray="402" stroke-dashoffset="402"
+                  transform="rotate(-90 75 75)"/>
+        </svg>
+        <div class="label"><div class="n" id="scoreNum">–</div><div class="t">/ 100</div></div>
+      </div>
+      <div class="verdict">
+        <div id="verdictBadge" class="badge cleared">—</div>
+        <p id="verdictText"></p>
+        <div class="thresh-row">
+          <span>Review threshold: <b id="threshVal">50</b></span>
+          <input type="range" id="threshSlider" min="0" max="100" value="50" />
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:18px">
+      <button class="btn" id="exportBtn">⬇ Export session JSON</button>
+      <span class="stat">Event stream + computed features, for later model calibration.</span>
+    </div>
+    <p class="disclaimer">
+      <b>Thresholds and weights are uncalibrated placeholders.</b> They must be tuned on real
+      NxtWave learner data before any operational use. This tool measures writing <i>behaviour</i>,
+      not prose style — it does not judge whether English is "good." It is for open-ended /
+      reflection answers only, and its output is a human-review trigger, not a verdict.
+    </p>
+  </div>
+
+</div>
+
+<script>
+/* =================================================================
+   CONFIG — calibration knobs. EDIT HERE. No magic numbers inline.
+   These are placeholder weights/thresholds: tune on real learner data.
+   ================================================================= */
+const CONFIG = {
+  // Relative weight of each feature in the final 0-100 score.
+  // Weights are normalized automatically, so only their ratios matter.
+  weights: {
+    planning_pauses: 0.25,  // authentic writers pause to plan
+    revision_rate:   0.25,  // authentic writers self-correct
+    paste_share:     0.20,  // pasted fraction of final text
+    longest_paste:   0.20,  // one big block = strong transcription signal
+    burstiness:      0.10,  // paste-heavy sessions are extremely bursty
+  },
+
+  // Normalization targets: the value at which a feature's authenticity
+  // sub-score saturates (reaches its best contribution).
+  norm: {
+    pause_burst_ms:      1200, // a gap >= this counts as a planning pause before a burst
+    pause_target_ms:     900,  // mean planning-pause length that maps to "fully authentic"
+    revision_target:     0.08, // (deletions + mid-insertions) per char that maps to authentic
+    longest_paste_cap:   120,  // a single paste this big (chars) maps to least authentic
+    burstiness_baseline: 1.0,  // CV of inter-event gaps for natural typing (~1)
+    burstiness_range:    4.0,  // CV span above baseline that maps to fully bursty/pasted
+  },
+
+  // Per-feature good / watch / flag bands for the reviewer indicator.
+  // Bands are expressed in the feature's *authenticity sub-score* (0..1):
+  //   sub >= good  -> "good"; sub >= watch -> "watch"; else -> "flag".
+  bands: { good: 0.66, watch: 0.40 },
+
+  // Default review threshold on the final 0-100 score (slider overrides it live).
+  defaultThreshold: 50,
+};
+
+/* =================================================================
+   CAPTURE — record event TYPE + TIMING only. Never content.
+   ================================================================= */
+const editor   = document.getElementById('editor');
+let events     = [];      // {t, type:'key'|'paste'|'delete', size}
+let startTime  = null;
+let prevLen    = 0;       // previous text length (length only, not content)
+let elapsedTimer = null;
+
+function now() { return performance.now(); }
+function ensureStart() { if (startTime === null) startTime = now(); }
+function rel() { return Math.round(now() - startTime); }
+
+editor.addEventListener('keydown', (e) => {
+  // ignore pure modifiers / navigation so they don't masquerade as "production"
+  const nav = ['Shift','Control','Alt','Meta','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Tab','CapsLock'];
+  if (nav.includes(e.key)) return;
+  ensureStart();
+
+  if (e.key === 'Backspace' || e.key === 'Delete') {
+    const selLen = Math.abs(editor.selectionEnd - editor.selectionStart);
+    events.push({ t: rel(), type: 'delete', size: Math.max(1, selLen) });
+  } else if (e.key.length === 1 || e.key === 'Enter') {
+    // is the caret away from the end? -> mid-text insertion (revision behaviour)
+    const atEnd = editor.selectionStart >= editor.value.length;
+    events.push({ t: rel(), type: 'key', size: 1, mid: !atEnd });
+  }
+  refreshLiveStats();
+});
+
+editor.addEventListener('paste', (e) => {
+  ensureStart();
+  const pasted = (e.clipboardData || window.clipboardData).getData('text') || '';
+  events.push({ t: rel(), type: 'paste', size: pasted.length }); // COUNT ONLY, no content
+  setTimeout(refreshLiveStats, 0);
+});
+
+editor.addEventListener('input', () => { prevLen = editor.value.length; refreshLiveStats(); });
+
+function refreshLiveStats() {
+  document.getElementById('charCount').textContent = editor.value.length;
+  document.getElementById('eventCount').textContent = events.length;
+}
+function tickElapsed() {
+  if (startTime === null) return;
+  document.getElementById('elapsed').textContent = ((now() - startTime) / 1000).toFixed(1) + 's';
+}
+elapsedTimer = setInterval(tickElapsed, 100);
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  events = []; startTime = null; prevLen = 0;
+  editor.value = '';
+  refreshLiveStats();
+  document.getElementById('elapsed').textContent = '0.0s';
+  ['replayCard','featureCard','scoreCard'].forEach(id => document.getElementById(id).classList.add('hidden'));
+});
+
+/* =================================================================
+   PROCESS-FEATURE ENGINE
+   ================================================================= */
+function computeFeatures(evs, finalLen) {
+  const N = CONFIG.norm;
+  const keyEvents   = evs.filter(e => e.type === 'key');
+  const pasteEvents = evs.filter(e => e.type === 'paste');
+  const delEvents   = evs.filter(e => e.type === 'delete');
+
+  const typedChars   = keyEvents.length;                         // chars produced by typing
+  const pastedChars  = pasteEvents.reduce((s,e)=>s+e.size, 0);
+  const deletedChars = delEvents.reduce((s,e)=>s+e.size, 0);
+  const midInsertions= keyEvents.filter(e => e.mid).length;
+  const producedChars= Math.max(1, typedChars + pastedChars);    // avoid /0
+  const totalLen     = Math.max(1, finalLen || (typedChars + pastedChars - deletedChars));
+
+  // --- inter-event gaps (timing only) ---
+  const gaps = [];
+  for (let i = 1; i < evs.length; i++) gaps.push(evs[i].t - evs[i-1].t);
+
+  // planning_pauses: mean length of gaps that precede a typing burst
+  // (a gap >= pause_burst_ms followed by a key event = planning before a burst)
+  const planningGaps = [];
+  for (let i = 1; i < evs.length; i++) {
+    const g = evs[i].t - evs[i-1].t;
+    if (g >= N.pause_burst_ms && evs[i].type === 'key') planningGaps.push(g);
+  }
+  const meanPlanningPause = planningGaps.length
+    ? planningGaps.reduce((a,b)=>a+b,0) / planningGaps.length : 0;
+  const burstCount = planningGaps.length + (typedChars > 0 ? 1 : 0); // bursts ~ pauses + first burst
+
+  // revision_rate: (deletions + mid-text insertions) per char produced
+  const revisionRate = (deletedChars + midInsertions) / producedChars;
+
+  // paste_share: fraction of final length that arrived via paste
+  const pasteShare = Math.min(1, pastedChars / totalLen);
+
+  // longest_paste: largest single paste (chars)
+  const longestPaste = pasteEvents.reduce((m,e)=>Math.max(m,e.size), 0);
+
+  // burstiness: coefficient of variation of inter-event gaps (clumpiness of rhythm)
+  let burstiness = 0;
+  if (gaps.length > 1) {
+    const mean = gaps.reduce((a,b)=>a+b,0)/gaps.length;
+    const variance = gaps.reduce((a,b)=>a+(b-mean)*(b-mean),0)/gaps.length;
+    burstiness = mean > 0 ? Math.sqrt(variance)/mean : 0; // CV
+  }
+
+  return {
+    raw: {
+      typedChars, pastedChars, deletedChars, midInsertions, totalLen,
+      planningPauseCount: planningGaps.length, burstCount,
+    },
+    features: {
+      planning_pauses: meanPlanningPause, // ms
+      revision_rate:   revisionRate,      // per char
+      paste_share:     pasteShare,        // 0..1
+      longest_paste:   longestPaste,      // chars
+      burstiness:      burstiness,        // CV
+    },
+  };
+}
+
+// Map each raw feature to an authenticity sub-score in [0,1] (1 = most authentic)
+function subScores(f) {
+  const N = CONFIG.norm;
+  return {
+    planning_pauses: clamp01(f.planning_pauses / N.pause_target_ms),
+    revision_rate:   clamp01(f.revision_rate   / N.revision_target),
+    paste_share:     clamp01(1 - f.paste_share),
+    longest_paste:   clamp01(1 - f.longest_paste / N.longest_paste_cap),
+    burstiness:      clamp01(1 - (f.burstiness - N.burstiness_baseline) / N.burstiness_range),
+  };
+}
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+
+function compositeScore(subs) {
+  const w = CONFIG.weights;
+  const totalW = Object.values(w).reduce((a,b)=>a+b,0);
+  let acc = 0;
+  for (const k in w) acc += w[k] * (subs[k] ?? 0);
+  return Math.round(100 * acc / totalW);
+}
+
+function band(sub) {
+  if (sub >= CONFIG.bands.good)  return 'good';
+  if (sub >= CONFIG.bands.watch) return 'watch';
+  return 'flag';
+}
+
+/* =================================================================
+   RENDER — reflection, features, score, replay
+   ================================================================= */
+let lastAnalysis = null;
+
+document.getElementById('analyzeBtn').addEventListener('click', () => {
+  const finalLen = editor.value.length;
+  const { raw, features } = computeFeatures(events, finalLen);
+  const subs  = subScores(features);
+  const score = compositeScore(subs);
+  lastAnalysis = { raw, features, subs, score, finalLen };
+
+  renderReflection(raw, features);
+  renderFeatures(features, subs);
+  renderScore(score);
+  setupReplay();
+
+  document.getElementById('replayCard').classList.remove('hidden');
+  applyMode();
+});
+
+function renderReflection(raw, f) {
+  document.getElementById('rPauses').textContent = f.planning_pauses ? (f.planning_pauses/1000).toFixed(1)+'s' : '0s';
+  document.getElementById('rRevise').textContent = raw.deletedChars + raw.midInsertions;
+  document.getElementById('rBursts').textContent = raw.burstCount;
+  const total = events.length ? (events[events.length-1].t/1000).toFixed(1)+'s' : '0s';
+  document.getElementById('rTime').textContent = total;
+}
+
+const FEATURE_META = {
+  planning_pauses: { label: 'Planning pauses', unit: 'ms avg',
+    desc: 'Average pause before a typing burst. Authentic writing pauses to plan; pasted text does not.',
+    fmt: v => Math.round(v) + ' ms' },
+  revision_rate: { label: 'Revision rate', unit: '/char',
+    desc: 'Deletions + mid-text insertions per character. Authentic writers self-correct; pasted text arrives finished.',
+    fmt: v => v.toFixed(3) },
+  paste_share: { label: 'Paste share', unit: 'fraction',
+    desc: 'Fraction of the final answer that arrived via paste. High = transcription.',
+    fmt: v => (v*100).toFixed(0) + '%' },
+  longest_paste: { label: 'Longest single paste', unit: 'chars',
+    desc: 'Largest single pasted block. One big block is the strongest transcription signal.',
+    fmt: v => Math.round(v) + ' chars' },
+  burstiness: { label: 'Burstiness', unit: 'CV',
+    desc: 'Clumpiness of typing rhythm (coefficient of variation). Paste-heavy sessions are extremely bursty.',
+    fmt: v => v.toFixed(2) },
+};
+
+function renderFeatures(features, subs) {
+  const body = document.getElementById('featureBody');
+  body.innerHTML = '';
+  for (const k in FEATURE_META) {
+    const m = FEATURE_META[k];
+    const b = band(subs[k]);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${m.label}</b><div class="desc">${m.desc}</div></td>
+      <td class="val">${m.fmt(features[k])}</td>
+      <td><span class="pill ${b}">${b}</span></td>`;
+    body.appendChild(tr);
+  }
+}
+
+function renderScore(score) {
+  document.getElementById('scoreNum').textContent = score;
+  const circ = 402, off = circ * (1 - score/100);
+  const arc = document.getElementById('gaugeArc');
+  arc.style.strokeDashoffset = off;
+  arc.style.stroke = score >= getThreshold() ? 'var(--good)' : 'var(--watch)';
+  renderVerdict(score);
+}
+
+function getThreshold(){ return parseInt(document.getElementById('threshSlider').value, 10); }
+
+function renderVerdict(score) {
+  const th = getThreshold();
+  const badge = document.getElementById('verdictBadge');
+  const text  = document.getElementById('verdictText');
+  if (score >= th) {
+    badge.className = 'badge cleared'; badge.textContent = '✓ Cleared';
+    text.textContent = `Score ${score} ≥ threshold ${th}. The composition process looks consistent with authentic writing. No action.`;
+  } else {
+    badge.className = 'badge review'; badge.textContent = '⚑ Routed to human review';
+    text.textContent = `Score ${score} < threshold ${th}. Flagged for a human reviewer to look at the process replay. This is NOT a penalty or an accusation — only a request for human eyes.`;
+  }
+}
+
+document.getElementById('threshSlider').addEventListener('input', (e) => {
+  document.getElementById('threshVal').textContent = e.target.value;
+  if (lastAnalysis) renderScore(lastAnalysis.score);
+});
+document.getElementById('threshSlider').value = CONFIG.defaultThreshold;
+document.getElementById('threshVal').textContent = CONFIG.defaultThreshold;
+
+/* =================================================================
+   REPLAY — timeline canvas + play/scrub
+   ================================================================= */
+const canvas = document.getElementById('timeline');
+const ctx = canvas.getContext('2d');
+let playTimer = null;
+let totalDuration = 1;
+
+function setupReplay() {
+  totalDuration = events.length ? events[events.length-1].t : 1;
+  const scrub = document.getElementById('scrub');
+  scrub.value = 1000;
+  document.getElementById('scrubTime').textContent = (totalDuration/1000).toFixed(1)+'s';
+  drawTimeline(totalDuration);
+}
+
+function sizeCanvas() {
+  const w = canvas.clientWidth || 800;
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== 160) canvas.height = 160;
+}
+
+function drawTimeline(uptoMs) {
+  sizeCanvas();
+  const W = canvas.width, H = canvas.height, pad = 20;
+  const plotW = W - pad*2, baseY = H - 40;
+  ctx.clearRect(0,0,W,H);
+
+  // baseline
+  ctx.strokeStyle = '#2a2f3a'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, baseY); ctx.lineTo(W-pad, baseY); ctx.stroke();
+
+  const xOf = t => pad + plotW * (totalDuration ? t/totalDuration : 0);
+
+  // events
+  for (const e of events) {
+    const x = xOf(e.t);
+    const active = e.t <= uptoMs;
+    if (e.type === 'key') {
+      ctx.strokeStyle = active ? '#5b8cff' : '#2c3340';
+      ctx.lineWidth = e.mid ? 2 : 1;
+      const h = e.mid ? 26 : 18;
+      ctx.beginPath(); ctx.moveTo(x, baseY); ctx.lineTo(x, baseY-h); ctx.stroke();
+    } else if (e.type === 'delete') {
+      ctx.strokeStyle = active ? '#ef5a6f' : '#3a2c30';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x, baseY); ctx.lineTo(x, baseY+12); ctx.stroke();
+    } else if (e.type === 'paste') {
+      // block sized by char count
+      const bw = Math.max(6, Math.min(plotW*0.5, e.size * 1.5));
+      const bh = Math.max(20, Math.min(70, 14 + e.size*0.4));
+      ctx.fillStyle = active ? 'rgba(198,120,221,0.85)' : 'rgba(198,120,221,0.22)';
+      ctx.fillRect(x, baseY-bh, bw, bh);
+      ctx.fillStyle = active ? '#fff' : '#6b5874';
+      ctx.font = '10px system-ui';
+      ctx.fillText(e.size + 'c', x+3, baseY-bh-3);
+    }
+  }
+
+  // playhead
+  const px = xOf(uptoMs);
+  ctx.strokeStyle = '#e6e9ef'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(px, 6); ctx.lineTo(px, H-6); ctx.stroke();
+
+  // time axis ticks
+  ctx.fillStyle = '#6b7280'; ctx.font = '10px system-ui';
+  for (let i=0; i<=4; i++) {
+    const t = totalDuration*i/4;
+    ctx.fillText((t/1000).toFixed(1)+'s', xOf(t)-8, H-10);
+  }
+}
+
+document.getElementById('scrub').addEventListener('input', (e) => {
+  const upto = totalDuration * (e.target.value/1000);
+  document.getElementById('scrubTime').textContent = (upto/1000).toFixed(1)+'s';
+  drawTimeline(upto);
+});
+
+document.getElementById('playBtn').addEventListener('click', function() {
+  if (playTimer) { stopPlay(); return; }
+  this.textContent = '⏸ Pause';
+  const scrub = document.getElementById('scrub');
+  let t0 = now() - 0;
+  const startUpto = (parseInt(scrub.value,10) >= 1000) ? 0 : totalDuration*(scrub.value/1000);
+  const begin = now();
+  playTimer = setInterval(() => {
+    const upto = startUpto + (now() - begin);
+    if (upto >= totalDuration) {
+      drawTimeline(totalDuration);
+      scrub.value = 1000;
+      document.getElementById('scrubTime').textContent = (totalDuration/1000).toFixed(1)+'s';
+      stopPlay(); return;
+    }
+    scrub.value = 1000 * upto/totalDuration;
+    document.getElementById('scrubTime').textContent = (upto/1000).toFixed(1)+'s';
+    drawTimeline(upto);
+  }, 30);
+});
+function stopPlay(){ clearInterval(playTimer); playTimer=null; document.getElementById('playBtn').textContent='▶ Play'; }
+window.addEventListener('resize', () => { if (lastAnalysis) drawTimeline(totalDuration * (document.getElementById('scrub').value/1000)); });
+
+/* =================================================================
+   EXPORT — event stream + computed features as JSON
+   ================================================================= */
+document.getElementById('exportBtn').addEventListener('click', () => {
+  if (!lastAnalysis) return;
+  const payload = {
+    schema: 'nxtwave.writing-process-signal/v1',
+    exported_at_iso: new Date().toISOString(),
+    privacy_note: 'Event TYPE and TIMING only. No typed content is captured or stored.',
+    scope: 'open-ended / reflection answers only — not for coding answers',
+    output_is: 'human-review trigger, never an automatic penalty',
+    config: CONFIG,
+    session: {
+      duration_ms: events.length ? events[events.length-1].t : 0,
+      final_length: lastAnalysis.finalLen,
+      event_count: events.length,
+      events: events,                 // [{t,type,size,mid?}]
+    },
+    computed: {
+      raw: lastAnalysis.raw,
+      features: lastAnalysis.features,
+      sub_scores: lastAnalysis.subs,
+      composition_authenticity_score: lastAnalysis.score,
+      threshold_used: getThreshold(),
+      routed_to_review: lastAnalysis.score < getThreshold(),
+    },
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'writing-process-session.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+/* =================================================================
+   MODE TOGGLE — learner (reflection) vs reviewer (signal)
+   ================================================================= */
+let mode = 'learner';
+document.getElementById('mode-learner').addEventListener('click', () => { mode='learner'; applyMode(); });
+document.getElementById('mode-reviewer').addEventListener('click', () => { mode='reviewer'; applyMode(); });
+
+function applyMode() {
+  document.getElementById('mode-learner').classList.toggle('active', mode==='learner');
+  document.getElementById('mode-reviewer').classList.toggle('active', mode==='reviewer');
+  const analyzed = !!lastAnalysis;
+  // learner: reflection tiles; reviewer: features + score
+  document.getElementById('reflectCard').classList.toggle('hidden', mode!=='learner' || !analyzed);
+  document.getElementById('featureCard').classList.toggle('hidden', mode!=='reviewer' || !analyzed);
+  document.getElementById('scoreCard').classList.toggle('hidden', mode!=='reviewer' || !analyzed);
+}
+applyMode();
+</script>
+</body>
+</html>

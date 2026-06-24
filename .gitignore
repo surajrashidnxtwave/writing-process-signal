@@ -1,0 +1,13 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Exported sessions (may contain learner timing data — keep out of repo)
+writing-process-session*.json
+
+# Node (not used now, but in case tooling is added later)
+node_modules/
+npm-debug.log*
